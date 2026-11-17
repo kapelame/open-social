@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { get } from 'node:http';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -51,6 +52,19 @@ const post = (path, payload) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+
+test('a symlinked command starts the CLI from another working directory', async () => {
+  const command = join(dir, 'launch.mjs');
+  await symlink(new URL('../server/app.mjs', import.meta.url), command);
+  const result = spawnSync(process.execPath, [command], {
+    cwd: dir,
+    env: { ...process.env, PORT: 'invalid' },
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /有效的 TCP 端口/);
+});
 
 before(async () => {
   dir = await mkdtemp(join(tmpdir(), 'open-social-http-'));

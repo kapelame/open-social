@@ -124,9 +124,14 @@ function renderComposer(container, ctx) {
   const selected = (id) => draft.selected.includes(id);
   const countText = (text) => Array.from(text).length;
   const showSave = () => {
-    el('save').innerHTML =
-      glyph(saved ? 'check' : 'alert', 14) + (saved ? '草稿已在本机保存' : '浏览器未能保存草稿');
+    const [icon, message] = writes ? ['clock', '正在保存草稿']
+      : saved ? ['check', '草稿已在本机保存'] : ['alert', '浏览器未能保存草稿'];
+    el('save').innerHTML = glyph(icon, 14) + message;
   };
+  function guardPendingSave(event) {
+    event.preventDefault();
+    event.returnValue = true;
+  }
   function syncDraft() {
     if (writes || busy || !saved || !current()) return;
     const latest = store.read();
@@ -151,6 +156,10 @@ function renderComposer(container, ctx) {
     change(draft);
     submittingError = '';
     writes++;
+    if (writes === 1) {
+      showSave();
+      window.addEventListener('beforeunload', guardPendingSave, { signal: ctx.signal });
+    }
     lastSave = store.edit(id, change).then(() => {
       saved = true;
       return true;
@@ -160,6 +169,7 @@ function renderComposer(container, ctx) {
       return false;
     }).finally(() => {
       writes--;
+      if (!writes) window.removeEventListener('beforeunload', guardPendingSave);
       if (current()) {
         showSave();
         syncDraft();

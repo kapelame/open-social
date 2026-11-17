@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { open, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -450,7 +450,9 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// Node 22.16 lacks import.meta.main. Resolve aliases for the entry script on that version.
+const entry = process.argv[1];
+if (import.meta.main ?? (entry && existsSync(entry) && import.meta.url === pathToFileURL(realpathSync(entry)).href)) {
   main().catch((error) => {
     console.error(`Open Social 启动失败：${error.message}`);
     process.exitCode = 1;
