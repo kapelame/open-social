@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f6f0" />
+    <meta name="description" content="在同一个工作区追踪话题、编辑图文，并发布至多个社交平台。" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/src/base.css" />
+    <link rel="stylesheet" href="/src/radar.css" />
+    <link rel="stylesheet" href="/src/studio.css" />
+    <title>话题雷达 · Open Social</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">跳到内容</a>
+    <div class="app-frame">
+      <aside class="side" id="side" aria-label="主导航">
+        <a class="brand" href="#discover" aria-label="Open Social 主页"
+          ><img src="/favicon.svg" width="34" height="34" alt="" /><strong>Open Social</strong></a
+        >
+        <nav id="navigation" aria-label="工作台"></nav>
+        <section class="topics-nav">
+          <div class="nav-label">
+            关注话题<button id="add-topic" type="button" title="搜索并关注话题" aria-label="搜索并关注话题">
+              +
+            </button>
+          </div>
+          <div id="followed"></div>
+        </section>
+        <div class="side-foot">
+          <span class="workspace-avatar">OS</span>
+          <div>
+            <strong>本地工作区</strong><small><i></i> 个人工作台</small>
+          </div>
+        </div>
+      </aside>
+      <div class="side-backdrop" id="backdrop" hidden></div>
+      <div class="main-frame">
+        <header class="topbar">
+          <button
+            id="mobile-nav"
+            class="icon-button mobile-nav"
+            type="button"
+            aria-label="展开导航"
+            aria-controls="side"
+            aria-expanded="false"
+          ></button>
+          <div class="crumb" aria-label="当前位置">
+            <span>工作台</span><b>/</b><strong id="breadcrumb">话题雷达</strong>
+          </div>
+          <div class="top-actions">
+            <a
+              class="github-link"
+              href="https://github.com/kapelame/open-social"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="GitHub 项目仓库"
+              title="GitHub 项目仓库"
+            ></a
+            ><i class="top-divider"></i><a class="primary-button" id="new-post" href="#compose"></a>
+          </div>
+        </header>
+        <main id="content" tabindex="-1"></main>
+      </div>
+    </div>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
