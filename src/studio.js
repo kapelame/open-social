@@ -158,7 +158,8 @@ function renderComposer(container, ctx) {
     writes++;
     if (writes === 1) {
       showSave();
-      window.addEventListener('beforeunload', guardPendingSave, { signal: ctx.signal });
+      // A queued edit can still be saving after the user navigates to another workspace view.
+      window.addEventListener('beforeunload', guardPendingSave);
     }
     lastSave = store.edit(id, change).then(() => {
       saved = true;
