@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f6f6f0" />
     <meta name="description" content="在同一个工作区追踪话题、编辑图文，并发布至多个社交平台。" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="preload" href="/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/src/base.css" />
     <link rel="stylesheet" href="/src/radar.css" />
@@ -17,7 +17,7 @@
     <div class="app-frame">
       <aside class="side" id="side" aria-label="主导航">
         <a class="brand" href="#discover" aria-label="Open Social 主页"
-          ><img src="/favicon.svg" width="34" height="34" alt="" /><strong>Open Social</strong></a
+          ><img class="brand-avatar" src="/art/open-social-avatar.webp" width="38" height="38" alt="" /><strong>Open Social</strong></a
         >
         <nav id="navigation" aria-label="工作台"></nav>
         <section class="topics-nav">
@@ -47,6 +47,9 @@
             aria-expanded="false"
           ></button>
           <div class="crumb" aria-label="当前位置">
+            <a class="mobile-home" href="#discover" aria-label="Open Social 主页"
+              ><img class="brand-avatar" src="/art/open-social-avatar.webp" width="30" height="30" alt=""
+            /></a>
             <span>工作台</span><b>/</b><strong id="breadcrumb">话题雷达</strong>
           </div>
           <div class="top-actions">

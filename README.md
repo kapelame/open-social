@@ -49,7 +49,7 @@ npm start
 - 前端使用原生浏览器 ES 模块，服务端使用 Node HTTP 和内置 SQLite。无需构建前端，字体和主图随仓库分发。
 - 运行 `npm test` 检查搜索、授权、媒体上传、任务幂等和队列恢复。适配器测试使用模拟平台回执。
 
-[渠道连接截图](docs/screenshots/channels.png) · [手机截图](docs/screenshots/mobile.png) · [ImageGen 主图和提示词](docs/art-direction.md)
+[渠道连接截图](docs/screenshots/channels.png) · [手机截图](docs/screenshots/mobile.png) · [品牌头像、主图与生成提示词](docs/art-direction.md)
 
 ## 设计参考与许可
 

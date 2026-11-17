@@ -100,9 +100,12 @@ a svg {
   font-size: 26px;
   line-height: 1;
 }
-.brand img {
-  box-shadow: 0 2px 3px #38200a10;
+.brand-avatar {
+  display: block;
   border-radius: 9px;
+}
+.mobile-home {
+  display: none;
 }
 .nav-label {
   padding: 0 14px;
@@ -425,6 +428,15 @@ main {
   }
   .crumb {
     gap: 9px;
+  }
+  .mobile-home {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+  .crumb > span,
+  .crumb > b {
+    display: none;
   }
   main {
     padding: 23px 17px 38px;
