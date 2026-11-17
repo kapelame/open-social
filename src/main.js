@@ -81,12 +81,17 @@ const ctx = {
   isFollowed,
   toggleFollow,
   refreshShell: displayFollows,
-  composeFrom(text) {
-    seedStudioDraft({ text, append: true });
-    navigate('compose');
+  async composeFrom(text) {
+    try {
+      await seedStudioDraft({ text, append: true });
+      navigate('compose');
+    } catch { toast('引用未能写入本机草稿，请重试。'); }
   },
 };
+let pageEvents;
 function renderPage() {
+  pageEvents?.abort();
+  pageEvents = new AbortController();
   const requested = location.hash.slice(1);
   current = Object.hasOwn(pages, requested) ? requested : 'discover';
   document.getElementById('breadcrumb').textContent = pages[current];
@@ -103,7 +108,7 @@ function renderPage() {
   const pane = document.createElement('div');
   main.append(pane);
   if (current === 'discover') renderRadar(pane, ctx);
-  else renderStudio(current, pane, ctx);
+  else renderStudio(current, pane, { ...ctx, signal: pageEvents.signal });
 }
 function focusSearch() {
   hideMenu();

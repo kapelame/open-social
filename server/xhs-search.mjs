@@ -54,7 +54,10 @@ async function readNote(bridgeRequest, feed, start, end) {
 }
 
 /** The bridge only supplies a publication timestamp in the individual note details. */
-export async function searchXhs({ topic, start, end, bridgeRequest = xhsBridgeRequest }) {
+export async function searchXhs({
+  topic, start, end, env = process.env,
+  bridgeRequest = (endpoint, options) => xhsBridgeRequest(endpoint, { ...options, env }),
+}) {
   // The bridge has no monthly filter. For 30 days, sample its newest candidates
   // before checking exact dates so older, highly liked notes cannot fill the sample.
   const filters =

@@ -256,13 +256,14 @@ function oauthFailure(res, origin) {
 
 export async function createApp(options = {}) {
   const dataDir = resolve(options.dataDir || process.env.OPEN_SOCIAL_DATA_DIR || join(projectDir, '.data'));
+  const env = { ...(options.settingsEnv || process.env) };
   const directories = {
     publicDir: options.publicDir ?? join(projectDir, 'public'),
     sourceDir: options.sourceDir ?? join(projectDir, 'src'),
     docsDir: options.docsDir ?? join(projectDir, 'docs'),
   };
-  const providers = options.providers || (await import('./providers.mjs'));
-  const discover = options.discover || (await import('./discovery.mjs')).discover;
+  const providers = options.providers || (await import('./providers.mjs')).createProviders({ dataDir, env });
+  const discover = options.discover || (await import('./discovery.mjs')).createDiscoveryService({ env });
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(join(dataDir, 'workspace.sqlite'));
   let media, queue, settings;
@@ -272,7 +273,7 @@ export async function createApp(options = {}) {
       'PRAGMA busy_timeout=750; PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;',
     );
     media = createMediaStore(db, dataDir);
-    settings = createLocalSettings(dataDir, options.settingsEnv || process.env);
+    settings = createLocalSettings(dataDir, env);
     queue = createQueue({
       db,
       loadMedia: media.loadMedia,
@@ -353,7 +354,7 @@ export async function createApp(options = {}) {
         await readJson(req);
         const state = pathname.endsWith('/detect')
           ? await detectLocalBridge()
-          : await getBridgeQr(options.settingsEnv || process.env);
+          : await getBridgeQr(env);
         return respond(res, 200, state);
       }
       if (pathname === '/api/discover') {
@@ -380,10 +381,14 @@ export async function createApp(options = {}) {
         if (req.method === 'GET') return respond(res, 200, { jobs: queue.list() });
         return respond(res, 201, await queue.enqueue(await readJson(req)));
       }
-      if (parts.length === 5 && parts[1] === 'api' && parts[2] === 'jobs' && parts[4] === 'retry') {
+      if (
+        parts.length === 5 && parts[1] === 'api' && parts[2] === 'jobs' &&
+        ['retry', 'confirm'].includes(parts[4])
+      ) {
         assertMethod(req, 'POST');
         const { platform } = await readJson(req);
-        return respond(res, 200, await queue.retry(parts[3], platform));
+        const job = parts[4] === 'confirm' ? queue.confirm(parts[3], platform) : queue.retry(parts[3], platform);
+        return respond(res, 200, job);
       }
       if (parts[1] === 'api') throw problem(404, '没有找到该接口。');
       await serveStatic(req, res, pathname, directories);

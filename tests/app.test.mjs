@@ -206,3 +206,45 @@ test('rejects fake/oversized media, stores real images, and completes an idempot
 test('a second server cannot run another worker over the same data store', async () => {
   await assert.rejects(createApp({ ...directories, providers, discover }), /locked/);
 });
+
+test('website handoff persists the media and independently confirms each platform by user action', async () => {
+  const upload = await call('/api/media', {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/png', 'x-filename': 'photo.png' },
+    body: png,
+  });
+  assert.equal(upload.status, 201);
+  const image = await upload.json();
+  const payload = {
+    requestId: 'website-handoff',
+    mode: 'browser',
+    targets: [
+      { platform: 'x', text: '短帖' },
+      { platform: 'xiaohongshu', text: '小红书专属文案', title: '小红书专属标题' },
+    ],
+    mediaIds: [image.id],
+  };
+  const response = await post('/api/jobs', payload);
+  assert.equal(response.status, 201);
+  const job = await response.json();
+  const confirm = (id, platform) => post(`/api/jobs/${id}/confirm`, { platform });
+  const confirmations = await Promise.all([confirm(job.id, 'x'), confirm(job.id, 'x')]);
+  assert.ok(confirmations.every(result => result.status === 200));
+  const [one, two] = await Promise.all(confirmations.map(result => result.json()));
+  assert.deepEqual(one, two);
+  assert.deepEqual(one.targets.map(target => target.status), ['user_confirmed', 'awaiting_user']);
+  assert.ok(one.targets.every(target => target.attempts === 0 && !target.canRetry && !target.remoteId));
+  for (const mode of ['demo', 'live']) {
+    const other = await (await post('/api/jobs', { ...payload, requestId: 'confirm-' + mode, mode })).json();
+    assert.equal((await confirm(other.id, 'x')).status, 409);
+  }
+  await app.close();
+  await listen();
+  const persisted = (await (await call('/api/jobs')).json()).jobs.find(entry => entry.id === job.id);
+  assert.deepEqual(persisted, one);
+  assert.equal(persisted.targets[1].title, payload.targets[1].title);
+  assert.equal(persisted.targets[1].text, payload.targets[1].text);
+  assert.deepEqual(persisted.mediaIds, [image.id]);
+  assert.deepEqual(persisted.media, [{ id: image.id, name: 'photo.png', mime: 'image/png' }]);
+  assert.deepEqual(Buffer.from(await (await call('/media/' + image.id)).arrayBuffer()), png);
+});

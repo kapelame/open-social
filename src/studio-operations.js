@@ -1,9 +1,13 @@
+import { browserMaterials, browserTarget, createBrowserActions } from './browser-publish.js';
+import { platformComposerUrl, platformLoginUrl } from './platform-web.js';
 import { api, escapeHtml, glyph, heading, platformBadge, platforms, safeHref } from './studio-ui.js';
 
 const channelInfo = {
   x: {
     service: 'X API',
-    summary: '发布短帖和配图，完成授权后即可加入后台队列。',
+    site: 'x.com',
+    webAction: '打开发帖页',
+    summary: '从队列打开 X 时会带入文案。添加配图后即可在 X 发布。',
     config: ['X_CLIENT_ID', 'X_CLIENT_SECRET'],
     guide:
       '在 X 开发者控制台启用 OAuth 2.0 用户授权并允许读写，登记显示的回调地址，在「配置渠道」内填写 Client ID。机密客户端还需填写 Client Secret。',
@@ -12,7 +16,9 @@ const channelInfo = {
   },
   xiaohongshu: {
     service: 'xiaohongshu-mcp',
-    summary: '通过自托管社区连接器，将标题、正文和配图发布为笔记。',
+    site: 'creator.xiaohongshu.com',
+    webAction: '进入创作中心',
+    summary: '在创作中心登录或扫码，选择图文笔记，添加准备好的图片、标题和正文。',
     config: ['XHS_BRIDGE_URL'],
     guide:
       '在本机启动 xiaohongshu-mcp，扫码登录本人账号。在「配置渠道」内检测本机连接器或填写服务地址。容器部署还需映射共享图片目录。',
@@ -21,7 +27,9 @@ const channelInfo = {
   },
   linkedin: {
     service: 'LinkedIn Posts API',
-    summary: '使用本人授权的 LinkedIn 账号，发布职业动态和图片。',
+    site: 'linkedin.com',
+    webAction: '打开动态页',
+    summary: '在动态页选择「发起动态」，粘贴文案并添加配图。',
     config: ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'],
     guide:
       '在 LinkedIn 应用中启用 Share on LinkedIn，和 Sign In with LinkedIn using OpenID Connect。网页应用需登记 HTTPS 回调，已获批原生 PKCE 的应用可使用本机回环地址。已有个人令牌的配置见完整文档。',
@@ -31,6 +39,8 @@ const channelInfo = {
 };
 
 const targetStates = {
+  awaiting_user: ['待网页发布', 'warn'],
+  user_confirmed: ['本人已确认', 'good'],
   queued: ['等待执行', ''],
   running: ['发布中', 'warn'],
   published: ['已发布', 'good'],
@@ -42,7 +52,7 @@ const targetStates = {
 
 const activeStates = new Set(['queued', 'running']);
 const attentionStates = new Set(['uncertain', 'failed', 'blocked']);
-const filters = { all: '全部记录', active: '进行中', attention: '需处理', done: '已完成' };
+const filters = { all: '全部记录', browser: '待网页发布', active: '进行中', attention: '需处理', done: '已完成' };
 
 function statusChip(text, tone = '') {
   return `<span class="st-status ops-chip ${tone}"><i aria-hidden="true"></i>${escapeHtml(text)}</span>`;
@@ -55,35 +65,40 @@ function nameOf(id) {
 function channelCard(channel) {
   const { id, configured, connected, detail, connectable } = channel;
   const info = channelInfo[id];
-  const status = connected ? ['已连接', 'good'] : configured ? ['等待连接', 'warn'] : ['待配置', ''];
-
-  const showSecondarySetup = connected || (id === 'xiaohongshu' ? configured : connectable);
-  let action;
-  if (!connected && connectable && id !== 'xiaohongshu') {
-    action = `<a class="st-btn st-btn-dark" href="/api/connect/${id}">${glyph('link', 15)}连接账号</a>`;
-  } else if (connected) {
-    action = `<button type="button" class="st-btn" data-write>撰写帖子${glyph('arrow', 15)}</button>`;
-  } else if (configured && id === 'xiaohongshu') {
-    action = `<button type="button" class="st-btn" data-refresh>${glyph('refresh', 15)}检查登录状态</button>`;
-  } else {
-    action = `<button type="button" class="st-btn" data-setup="${id}">${glyph('plug', 15)}配置渠道</button>`;
-  }
+  const name = nameOf(id);
+  const status = connected ? '已连接' : configured ? '待连接' : '';
   const callback = safeHref(channel.redirectUri);
   const callbackMarkup = callback
     ? `<div class="ops-callback"><span>OAuth 回调地址</span><code>${escapeHtml(callback)}</code><button type="button" class="ops-secondary" data-copy="${escapeHtml(callback)}">${glyph('copy', 12)}复制地址</button></div>`
     : '';
-  const connectionDetail =
-    typeof detail === 'string' && detail.trim()
-      ? `<p class="ops-connection-detail">${escapeHtml(detail)}</p>`
-      : '';
+  const oauth = id !== 'xiaohongshu' && connectable;
+  const authorize = oauth && !connected
+    ? `<a class="ops-direct-auth" href="/api/connect/${id}">${glyph('link', 14)}授权自动投递</a>`
+    : '';
   return `<article class="st-card ops-channel">
-    <div class="ops-channel-main"><div class="ops-channel-top">${platformBadge(id)}${statusChip(...status)}</div>
-    <h2>${escapeHtml(nameOf(id))}</h2><span class="ops-service">${info.service}</span>
-    <p class="ops-channel-summary">${info.summary}</p>${connectionDetail}</div>
-    <div class="ops-channel-actions">${action}${showSecondarySetup ? `<button class="ops-secondary" type="button" data-setup="${id}">配置渠道</button>` : ''}${connected && connectable && id !== 'xiaohongshu' ? `<button class="ops-secondary" type="button" data-disconnect="${id}">断开连接</button>` : ''}</div>
-    <details class="ops-guide" id="ops-guide-${id}"><summary>连接说明${glyph('chevron', 15)}</summary><div class="ops-guide-body"><p>${info.guide}</p>
-    <div class="ops-env">${info.config.map((key) => `<code>${key}</code>`).join('')}</div>${callbackMarkup}
-    <a href="${info.consoleUrl}" target="_blank" rel="noopener noreferrer">${info.consoleLabel}${glyph('external', 13)}</a></div></details></article>`;
+    <div class="ops-channel-main">
+      <div class="ops-channel-top">${platformBadge(id)}<span class="ops-service">${info.site}</span></div>
+      <h2>${name}</h2><p class="ops-channel-summary">${info.summary}</p>
+    </div>
+    <div class="ops-channel-actions">
+      <a class="st-btn st-btn-dark" href="${platformComposerUrl(id)}" target="_blank" rel="noopener noreferrer" aria-label="${name} · ${info.webAction}（新窗口）">${info.webAction}${glyph('external', 14)}</a>
+      <a class="ops-secondary" href="${platformLoginUrl(id)}" target="_blank" rel="noopener noreferrer" aria-label="登录 ${name} 官网（新窗口）">官网登录</a>
+    </div>
+    ${authorize}
+    <details class="ops-guide" id="ops-guide-${id}">
+      <summary><span>自动投递设置${status ? ` · ${status}` : ''}</span>${glyph('chevron', 14)}</summary>
+      <div class="ops-guide-body">
+        <p><strong>${info.service}</strong></p><p>${info.guide}</p>
+        ${detail ? `<p class="ops-connection-detail">${escapeHtml(detail)}</p>` : ''}
+        <div class="ops-env">${info.config.map((key) => `<code>${key}</code>`).join('')}</div>${callbackMarkup}
+        <div class="ops-advanced-actions">
+          <button type="button" class="st-btn" data-setup="${id}">${glyph('plug', 14)}配置渠道</button>
+          ${connected && oauth ? `<button class="ops-secondary" type="button" data-disconnect="${id}">断开授权</button>` : ''}
+          <button class="ops-secondary" type="button" data-refresh>${glyph('refresh', 13)}刷新状态</button>
+        </div>
+        <a href="${info.consoleUrl}" target="_blank" rel="noopener noreferrer">${info.consoleLabel}${glyph('external', 13)}</a>
+      </div>
+    </details></article>`;
 }
 
 const setupFields = {
@@ -313,6 +328,7 @@ function showSetup(root, channel, ctx, refresh) {
 }
 
 function groupFor(job) {
+  if (job.targets.some((target) => target.status === 'awaiting_user')) return 'browser';
   if (job.targets.some((target) => attentionStates.has(target.status))) return 'attention';
   if (job.targets.some((target) => activeStates.has(target.status))) return 'active';
   return 'done';
@@ -342,12 +358,15 @@ function entryCard(job) {
       .split('\n')
       .find((line) => line.trim()) || '图片帖子';
   const imageCount = Array.isArray(job.mediaIds) ? job.mediaIds.length : 0;
+  const mode = job.mode === 'browser' ? ['网页发布', 'bp-mode'] : job.mode === 'demo' ? ['本地演练', 'ops-demo'] : ['自动投递', ''];
   return `<article class="st-card ops-job">
-    <div class="ops-job-heading"><div class="ops-job-meta"><span class="ops-job-mode ${job.mode === 'demo' ? 'ops-demo' : ''}">${job.mode === 'demo' ? '本地演练' : '真实发布'}</span><time>${escapeHtml(dateTime(job.createdAt))}</time></div>
+    <div class="ops-job-heading"><div class="ops-job-meta"><span class="ops-job-mode ${mode[1]}">${mode[0]}</span><time>${escapeHtml(dateTime(job.createdAt))}</time></div>
     <h2 title="${escapeHtml(excerpt)}">${escapeHtml(excerpt)}</h2><span class="ops-job-attachments">${escapeHtml(job.targets.length)} 个渠道${imageCount ? ` · ${imageCount} 张图片` : ''}</span></div>
+    ${job.mode === 'browser' ? browserMaterials(job) : ''}
     <div class="ops-results">${job.targets
       .map((target) => {
         const [label, tone] = targetStates[target.status] || ['状态未知', 'warn'];
+        if (job.mode === 'browser') return browserTarget(job, target, statusChip(label, tone));
         const url = target.status === 'published' ? externalLink(target.url) : '';
         let message = typeof target.message === 'string' ? target.message.trim() : '';
         if (target.status === 'uncertain' && !message) message = '请到平台核实是否送达，避免重复发布。';
@@ -369,36 +388,31 @@ function errorBox(error) {
 }
 
 function renderChannels(root, ctx) {
-  root.innerHTML = `${heading('渠道连接', '管理发帖账号的授权与连接状态。', `<button type="button" class="st-btn" data-refresh>${glyph('refresh', 15)}刷新状态</button>`)}
-    <div class="ops-channels-body" aria-live="polite"><p class="st-muted">正在检查渠道…</p></div>`;
+  root.innerHTML = `${heading('渠道连接', '网页登录沿用当前浏览器的账号。请在平台官网查看登录状态。', `<button type="button" class="st-btn st-btn-primary" data-write>${glyph('plus', 16)}撰写帖子</button>`)}
+    <div class="ops-channels-body"></div>`;
   const body = root.querySelector('.ops-channels-body');
-  let pending = false;
+  let version = 0;
+  function draw(list, warning = '') {
+    const openDetails = new Set([...body.querySelectorAll('details[open]')].map((el) => el.id));
+    const byId = new Map(list.map((channel) => [channel.id, channel]));
+    const cards = platforms.map(({ id }) => byId.get(id) || { id });
+    root.channelList = cards;
+    body.innerHTML = `<section aria-label="平台网站"><div class="ops-channel-grid">${cards.map(channelCard).join('')}</div></section>
+      ${warning ? `<p role="status" class="ops-connection-detail">自动投递状态暂时无法读取。${escapeHtml(warning)} <button class="ops-secondary" type="button" data-refresh>重试</button></p>` : ''}
+      <div class="ops-help"><div class="ops-help-icon">${glyph('queue', 21)}</div><div><h2>从队列完成网页发布</h2><p>在编辑器准备好各平台的图文。队列会保留每一份文案和配图，供你在对应网站发布并逐项确认。</p></div><a class="st-btn" href="#queue">查看发布队列${glyph('arrow', 14)}</a></div>`;
+    for (const detail of body.querySelectorAll('details')) detail.open = openDetails.has(detail.id);
+  }
   async function load() {
-    if (pending) return;
-    pending = true;
-    const openDetails = [...body.querySelectorAll('details[open]')].map((el) => el.id);
-    root.channelList = [];
-    const button = root.querySelector('[data-refresh]');
-    button.disabled = true;
+    const request = ++version;
     try {
       const { channels } = await api('/api/channels');
-      if (!root.isConnected) return;
-      const byId = new Map(channels.map((channel) => [channel.id, channel]));
-      const cards = platforms
-        .filter(({ id }) => Object.hasOwn(channelInfo, id) && byId.has(id))
-        .map(({ id }) => byId.get(id));
-      root.channelList = cards;
-      const connected = cards.filter((channel) => channel.connected).length;
-      body.innerHTML = `<section><div class="ops-section-title"><h2>发布渠道</h2><span class="ops-count">已连接 ${connected} / ${cards.length}</span></div><div class="ops-channel-grid">${cards.map(channelCard).join('')}</div></section>
-      <div class="ops-help"><div class="ops-help-icon">${glyph('plug', 21)}</div><div><h2>首次连接</h2><p>点击「配置渠道」保存应用资料或检测本机连接器，再按平台提示完成授权或扫码。</p></div><a class="st-btn" target="_blank" rel="noopener noreferrer" href="/docs/channels.md">查看配置文档${glyph('external', 14)}</a></div>`;
-      for (const detail of body.querySelectorAll('details')) detail.open = openDetails.includes(detail.id);
+      if (request === version && root.isConnected) draw(channels);
     } catch (error) {
-      if (root.isConnected) body.innerHTML = errorBox(error);
-    } finally {
-      pending = false;
-      button.disabled = false;
+      if (request === version && root.isConnected) draw([], error.message);
     }
   }
+  // Native website links work even while a configured background connector is offline.
+  draw([]);
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('button');
     if (!button) return;
@@ -420,7 +434,7 @@ function renderChannels(root, ctx) {
     }
     if (button.dataset.disconnect) {
       const id = button.dataset.disconnect;
-      if (!confirm(`断开 ${nameOf(id)} 的授权连接？后续真实发布需重新连接账号。`)) return;
+      if (!confirm(`断开 ${nameOf(id)} 的授权连接？后续自动投递需重新授权。`)) return;
       button.disabled = true;
       try {
         await api(`/api/channels/${encodeURIComponent(id)}/disconnect`, { method: 'POST' });
@@ -442,12 +456,14 @@ function renderQueue(root, ctx) {
   const body = root.querySelector('.ops-queue-body');
   let selected = 'all';
   let jobs = [];
+  const runBrowserAction = createBrowserActions(ctx.toast);
   let lastPayload = '';
+  let revision = 0;
   let timer;
   let pending = false;
   function draw() {
     const shown = jobs.filter((job) => selected === 'all' || groupFor(job) === selected);
-    const counts = { active: 0, attention: 0, done: 0, all: jobs.length };
+    const counts = { browser: 0, active: 0, attention: 0, done: 0, all: jobs.length };
     for (const job of jobs) counts[groupFor(job)] += 1;
     const chips = Object.entries(filters)
       .map(
@@ -469,10 +485,15 @@ function renderQueue(root, ctx) {
     if (pending || !root.isConnected) return;
     clearTimeout(timer);
     pending = true;
+    const requestedRevision = revision;
     let keepChecking = false;
     try {
       const response = await api('/api/jobs');
       if (!root.isConnected) return;
+      if (requestedRevision !== revision) {
+        keepChecking = true;
+        return;
+      }
       jobs = response.jobs;
       const payload = JSON.stringify(jobs);
       if (payload !== lastPayload) {
@@ -490,7 +511,7 @@ function renderQueue(root, ctx) {
     }
   }
   root.addEventListener('click', async (event) => {
-    const button = event.target.closest('button');
+    const button = event.target.closest('button, a[data-browser-action]');
     if (!button) return;
     if (button.hasAttribute('data-write')) return ctx.navigate('compose');
     if (button.hasAttribute('data-refresh')) return load();
@@ -498,6 +519,24 @@ function renderQueue(root, ctx) {
     if (Object.hasOwn(filters, button.dataset.filter)) {
       selected = button.dataset.filter;
       draw();
+      return;
+    }
+    if (button.dataset.browserAction) {
+      event.preventDefault();
+      const row = button.closest('[data-job-id]');
+      const job = jobs.find(item => item.id === row?.dataset.jobId);
+      if (job?.mode !== 'browser') return;
+      const target = job.targets.find(item => item.platform === row.dataset.platformId);
+      const updated = await runBrowserAction(button, job, target);
+      if (updated?.id === job.id && root.isConnected) {
+        revision++;
+        const confirmed = updated.targets.find(item => item.platform === target.platform);
+        jobs = jobs.map(item => item.id === updated.id ? {
+          ...item, targets: item.targets.map(t => t.platform === target.platform ? confirmed : t),
+        } : item);
+        lastPayload = JSON.stringify(jobs);
+        draw();
+      }
       return;
     }
     if (button.dataset.retry) {

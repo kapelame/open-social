@@ -119,6 +119,37 @@ test('demo processes every target without contacting any provider, even for conn
   await waitFor(queue, ['demo', 'demo', 'demo']);
 });
 
+test('browser jobs wait for the user without calling providers and cannot be retried', async (t) => {
+  const calls = [];
+  const queue = setup(t, {
+    getChannels: () => {
+      calls.push('channels');
+      return connected();
+    },
+    publishTarget: () => {
+      calls.push('publish');
+      return { remoteId: 'unexpected' };
+    },
+  });
+  const data = payload({ mode: 'browser' });
+  assert.throws(() => queue.enqueue({ ...data, mediaIds: [] }), { status: 400 });
+  const job = queue.enqueue(data);
+  assert.deepEqual(queue.enqueue(data), job);
+  assert.throws(() => queue.enqueue({ ...data, mode: 'live' }), { status: 409 });
+  for (const target of job.targets) {
+    assert.equal(target.status, 'awaiting_user');
+    assert.equal(target.attempts, 0);
+    assert.equal(target.canRetry, false);
+    assert.throws(() => queue.retry(job.id, target.platform), { status: 409 });
+  }
+  // Put a rehearsal behind this job to establish that the worker drained its queue.
+  queue.enqueue(payload({ requestId: 'rehearsal', mode: 'demo' }));
+  queue.start();
+  await waitFor(queue, ['demo', 'demo', 'demo']);
+  assert.deepEqual(queue.list().find((entry) => entry.id === job.id), job);
+  assert.deepEqual(calls, []);
+});
+
 test('disconnected target can be resumed independently after authorization', async (t) => {
   let online = false;
   const calls = [];

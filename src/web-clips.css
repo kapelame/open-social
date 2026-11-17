@@ -1,0 +1,137 @@
+.native-searches [data-web-clip-open] {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.clip-panel {
+  padding: 16px 19px;
+}
+.clip-panel h2 {
+  gap: 6px;
+  font-size: 15px;
+}
+.clip-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 9px 0 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.clip-panel li {
+  padding: 9px 0;
+}
+.clip-panel li + li {
+  border-top: 1px solid var(--line);
+}
+.clip-panel li > a {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.clip-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+.clip-actions small {
+  flex: 1;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.clip-actions button {
+  background: transparent;
+  border: 0;
+  color: #58644f;
+  padding: 4px 2px;
+  font-size: 11px;
+}
+.clip-dialog {
+  width: min(490px, 92vw);
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+  background: #fbfcf7;
+  color: var(--ink);
+}
+.clip-dialog::backdrop {
+  background: #18201970;
+}
+.clip-heading,
+.clip-source-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.clip-heading {
+  justify-content: space-between;
+}
+.clip-heading h2 {
+  font-size: 21px;
+  margin: 0;
+}
+.clip-topic {
+  margin: 6px 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.clip-dialog form {
+  display: grid;
+  gap: 8px;
+}
+.clip-dialog label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.clip-dialog textarea,
+.clip-dialog select {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+.clip-dialog textarea {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.5;
+}
+.clip-dialog small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.clip-dialog [type='submit'] {
+  justify-self: end;
+}
+.clip-feedback {
+  color: #a63d23;
+  margin: 0;
+  font-size: 12px;
+}
+.clip-assistant {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.clip-assistant summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.clip-source-row {
+  flex-wrap: wrap;
+  margin: 12px 0 8px;
+}
+.clip-dialog [data-task-fallback] {
+  margin-top: 8px;
+}

@@ -1,4 +1,5 @@
 @import url('./studio-operations.css');
+@import url('./browser-publish.css');
 
 .st-page {
   --st-paper: #fff;
@@ -627,6 +628,7 @@
   background: transparent;
   color: var(--st-muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 .st-mode-picks button.active {
   background: white;
@@ -642,13 +644,8 @@
 }
 .st-submit {
   width: 100%;
-  justify-content: flex-start;
+  justify-content: center;
   min-height: 42px;
-}
-.st-submit span {
-  margin-left: auto;
-  font-size: 11px;
-  font-weight: 500;
 }
 .st-submit-error {
   color: #942e1e;

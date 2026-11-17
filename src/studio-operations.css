@@ -597,3 +597,29 @@
     max-height: calc(100dvh - 22px);
   }
 }
+
+.ops-channel .ops-service {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.ops-channel-top .ops-service {
+  font-size: 11px;
+}
+.ops-channel .ops-direct-auth {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  margin: -4px 20px 14px;
+  color: var(--ops-ink);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ops-advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  margin-top: 12px;
+}

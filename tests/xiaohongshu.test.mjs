@@ -5,8 +5,51 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { publishXhs, xhsStatus } from '../server/xiaohongshu.mjs';
+import { createDiscoveryService } from '../server/discovery.mjs';
 
 const configKeys = ['XHS_BRIDGE_URL', 'XHS_BRIDGE_TOKEN', 'XHS_LOCAL_MEDIA_DIR', 'XHS_BRIDGE_MEDIA_DIR'];
+
+test('工作区使用各自的桥接账号、搜索凭据和图片挂载', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'opensocial-bridge-scopes-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const image = path.join(dir, 'cover.png');
+  await writeFile(image, 'fixture');
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const { hostname, pathname } = new URL(input);
+    const name = hostname.split('.')[0];
+    const body = init.body && JSON.parse(init.body);
+    requests.push({ name, pathname, auth: init.headers.Authorization, body });
+    let data;
+    if (pathname === '/api/v1/login/status') data = { is_logged_in: true, username: name };
+    if (pathname === '/api/v1/feeds/search') data = { feeds: [] };
+    if (pathname === '/api/v1/publish') data = { ...body, status: '发布完成', images: body.images.length };
+    return Response.json({ success: Boolean(data), data });
+  });
+
+  await Promise.all(['first', 'second'].map(async (name) => {
+    const env = {
+      XHS_BRIDGE_URL: 'https://' + name + '.example',
+      XHS_BRIDGE_TOKEN: name + '-fixture',
+      XHS_LOCAL_MEDIA_DIR: dir,
+      XHS_BRIDGE_MEDIA_DIR: '/' + name,
+    };
+    const discover = createDiscoveryService({ env });
+    const [channel, results] = await Promise.all([
+      xhsStatus(env),
+      discover({ topic: '同一主题', platform: 'xiaohongshu' }),
+      publishXhs({ title: name, text: name, images: [{ path: image }] }, env),
+    ]);
+    assert.equal(channel.detail, '已连接 · ' + name);
+    assert.equal(results.sources[0].status, 'ok');
+    const own = requests.filter((req) => req.name === name);
+    assert.ok(own.every((req) => req.auth === 'Bearer ' + name + '-fixture'));
+    assert.equal(own.filter((req) => req.pathname === '/api/v1/feeds/search').length, 1);
+    assert.deepEqual(own.find((req) => req.pathname === '/api/v1/publish')?.body, {
+      title: name, content: name, images: ['/' + name + '/cover.png'],
+    });
+  }));
+});
 
 test('小红书桥接图文发布', async (t) => {
   const original = Object.fromEntries(configKeys.map((key) => [key, process.env[key]]));

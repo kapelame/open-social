@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { nativeSearchUrl } from '../src/platform-web.js';
 
 const DAY = 86_400_000;
 const SAMPLE_LIMIT = 40;
@@ -6,6 +7,7 @@ const LABELS = {
   hn: 'Hacker News',
   github: 'GitHub',
   x: 'X',
+  linkedin: 'LinkedIn',
   xiaohongshu: '小红书',
   bluesky: 'Bluesky',
 };
@@ -309,13 +311,30 @@ export function createDiscoveryService({
     topic = topic.trim();
     days = Number(days);
     if (![7, 30].includes(days)) throw badInput('时间范围可选 7 天或 30 天。');
-    if (platform !== 'all' && !Object.hasOwn(PROVIDERS, platform))
+    const native =
+      platform === 'x' || platform === 'linkedin' || (platform === 'xiaohongshu' && !env.XHS_BRIDGE_URL);
+    if (native) {
+      return {
+        topic,
+        days,
+        mode: 'web',
+        asOf: null,
+        sources: [{ id: platform, label: LABELS[platform], status: 'web', count: 0 }],
+        posts: [],
+        links: [],
+        series: [],
+        total: 0,
+        nativeSearchUrl: nativeSearchUrl(platform, topic),
+        ...(platform === 'x' && env.X_BEARER_TOKEN ? { paidSearchAvailable: true } : {}),
+      };
+    }
+    if (platform !== 'all' && platform !== 'x-api' && !Object.hasOwn(PROVIDERS, platform))
       throw badInput('此平台没有接入话题搜索。');
+    // Only the explicit x-api request may contact X's metered search endpoint.
     const enabled = ['hn', 'github'];
-    if (env.X_BEARER_TOKEN) enabled.push('x');
     if (env.XHS_BRIDGE_URL) enabled.push('xiaohongshu');
     if (env.ENABLE_BLUESKY_SEARCH === 'true') enabled.push('bluesky');
-    const ids = platform === 'all' ? enabled : [platform];
+    const ids = platform === 'all' ? enabled : [platform === 'x-api' ? 'x' : platform];
     const end = now();
     const key = JSON.stringify([topic.toLowerCase(), days, ids]);
     const cached = cache.get(key);

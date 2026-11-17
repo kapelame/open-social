@@ -1,5 +1,7 @@
 import { icons } from './icons.js';
 import { escapeHtml, safeHref } from './studio-ui.js';
+import { mountWebClips } from './web-clips.js';
+import { nativeSearchUrl } from './platform-web.js';
 
 export const radarState = { topic: 'AI Agents', days: 7, platform: 'all', sort: 'popular', limit: 5 };
 
@@ -10,9 +12,12 @@ const platformNames = {
   x: 'X',
   xiaohongshu: '小红书',
   bluesky: 'Bluesky',
+  linkedin: 'LinkedIn',
+  news: 'Google 新闻',
 };
 const commonPlatforms = ['all', 'hn', 'github'];
-const extraPlatforms = ['x', 'xiaohongshu', 'bluesky'];
+const extraPlatforms = ['x', 'xiaohongshu', 'linkedin', 'bluesky'];
+const webPlatforms = ['x', 'xiaohongshu', 'linkedin', 'news'];
 const modes = {
   snapshot: '已保存快照',
   live: '实时采集',
@@ -95,8 +100,32 @@ function trendChart(series) {
   <div class="chart-axis">${ticks.map((point) => `<span>${shortDate(point.date)}</span>`).join('')}</div>`;
 }
 
+function webLink(id, topic, text = platformNames[id]) {
+  return `<a href="${escapeHtml(nativeSearchUrl(id, topic))}" target="_blank" rel="noopener noreferrer"
+    aria-label="在${platformNames[id]}搜索：${escapeHtml(topic)}">${escapeHtml(text)} ${icons('external', 13)}</a>`;
+}
+
+function nativeSearchRow(topic) {
+  return `<nav class="native-searches" aria-label="免费原站搜索"><span>${icons('globe', 15)} 原站搜索</span>
+    <div>${webPlatforms.map((id) => webLink(id, topic)).join('')}</div><button type="button" data-web-clip-open>收录网页结果</button></nav>`;
+}
+
+function nativePanel(result) {
+  const { topic, platform } = radarState;
+  const name = platformNames[platform];
+  return `<section class="chart-panel panel web-source-panel">
+    <div class="panel-header"><h2>${icons('globe', 18)}原站搜索</h2></div>
+    <h3>${name}</h3>
+    <p>使用浏览器里的账号查看帖子和互动数据。热度图仅统计工作台收录的样本。</p>
+    <div class="native-action">${webLink(platform, topic, '打开' + name + '搜索')}</div>
+    ${result.paidSearchAvailable ? '<button id="paid-x-search" type="button">高级 · 单次使用可能计费的 X API</button>' : ''}
+  </section>`;
+}
+
 function overview(result, counts, loading, pinned) {
   const { topic, days } = radarState;
+  const native = result.mode === 'web';
+  const fromXApi = !loading && !native && radarState.platform === 'x';
   const date = isoDay(result.asOf);
   const stale = result.mode === 'snapshot' && date && date < isoDay(new Date().toISOString());
   const period = stale ? `截至 ${date} · ${days} 天` : `近 ${days} 天`;
@@ -111,20 +140,24 @@ function overview(result, counts, loading, pinned) {
     <section class="topic-cover" aria-label="当前话题"><div class="cover-interior">
       <div class="cover-eyebrow"><i></i>TOPIC IN FOCUS</div>
       <h2>${escapeHtml(topic)}</h2>
-      <div class="cover-sub"><span>${icons('layers', 13)}${loading ? '…' : counts.length} 个来源</span><i></i><span>${period}</span></div>
+      <div class="cover-sub"><span>${icons('layers', 13)}${native ? platformNames[radarState.platform] : (loading ? '…' : counts.length) + ' 个来源'}</span><i></i><span>${native ? '在浏览器查看' : period}</span></div>
       <div class="cover-controls">
         <button type="button" id="draft-topic">${icons('compose', 14)}以此创作</button>
         <button type="button" id="follow-topic" aria-pressed="${pinned}">${icons(pinned ? 'check' : 'plus', 14)}${pinned ? '已关注' : '关注话题'}</button>
       </div>
     </div></section>
-    <section class="chart-panel panel">
+    ${
+      native
+        ? nativePanel(result)
+        : `<section class="chart-panel panel">
       <div class="panel-header"><h2>${icons('activity', 18)}讨论热度</h2><div class="period-switch">${periods}</div></div>
       <div class="chart-total"><strong>${loading ? '—' : Number(result.total).toLocaleString()}</strong><span>条收录样本</span></div>
       <div class="chart-plot">${trendChart(result.series)}</div>
       <div class="chart-status"><span><i class="mode-dot ${escapeHtml(result.mode)}"></i>${escapeHtml(label)}${date ? ` · ${date}` : ''}</span>
-        <button type="button" id="refresh" ${loading ? 'disabled' : ''}>${icons('refresh', 12)}刷新</button>
+        <button type="button" id="refresh" ${loading ? 'disabled' : ''}>${fromXApi ? icons('globe', 12) + '返回网页搜索' : icons('refresh', 12) + '刷新'}</button>
       </div>
-    </section>
+    </section>`
+    }
   </div>`;
 }
 
@@ -157,6 +190,9 @@ function emptyPosts(mode, loading) {
   if (loading) {
     title = '正在检索话题…';
     help = '正在读取来源数据';
+  } else if (mode === 'web') {
+    title = '在' + platformNames[radarState.platform] + '查看平台搜索结果';
+    help = '切换至公开来源即可继续查看工作台中的样本和热度曲线。';
   } else if (mode === 'unavailable') {
     title = '当前来源暂不可用';
     help = '可切换到其他来源，或在配置后刷新。';
@@ -169,7 +205,7 @@ function sourceNotice(sources) {
     .filter((source) => {
       if (source.status === 'snapshot')
         return source.refreshStatus || (source.message && source.message !== '已保存的公开数据样本');
-      return source.status !== 'ok';
+      return source.status !== 'ok' && source.status !== 'web';
     })
     .map((source) => `${source.label} · ${source.message || '暂时无法连接'}`);
   return messages.length
@@ -240,9 +276,8 @@ function references(result, counts, allLinks) {
     <span class="meter"><i data-ratio="${total ? source.count / total : 0}"></i></span><b>${Number(source.count)}</b></div>`,
     )
     .join('');
-  const search = new URL('https://www.linkedin.com/search/results/content/');
-  search.searchParams.set('keywords', radarState.topic);
   return `<aside class="radar-rail">
+    <section class="panel clip-panel" data-web-clips hidden></section>
     <section class="reference-panel panel">
       <div class="panel-header"><h2><span class="section-glyph">${icons('link', 16)}</span>相关链接</h2><span class="small-count">${links.length}</span></div>
       <div class="reference-list">${entries || '<p class="no-links">匹配的原文链接会显示在这里。</p>'}</div>${toggle}
@@ -252,7 +287,6 @@ function references(result, counts, allLinks) {
       ${sourceRows || '<p class="no-links">暂无来源样本</p>'}
       <details class="method"><summary>热度如何计算？</summary><p>${sampleNote}</p></details>
     </section>
-    <a class="external-search" target="_blank" rel="noopener noreferrer" href="${escapeHtml(search.href)}">在 LinkedIn 搜索此话题 ${icons('external', 14)}</a>
   </aside>`;
 }
 
@@ -263,7 +297,7 @@ export function renderRadar(container, ctx) {
     loading = false;
   container.className = 'radar-view';
   container.innerHTML = `<div class="radar-heading">
-    <div><h1>话题雷达<span class="heading-dot">.</span></h1><p>发现热门讨论，追踪话题在各平台的热度。</p></div>
+    <div><h1>话题雷达<span class="heading-dot">.</span></h1><p>查看公开来源的讨论热度，或前往平台搜索原帖。</p></div>
     <form class="topic-form" role="search">${icons('search', 18)}
       <input type="search" id="topic-input" aria-label="搜索话题" placeholder="搜索任意话题…" maxlength="120" required autocomplete="off">
       <kbd>⌘ K</kbd><button type="submit" aria-label="搜索">${icons('arrow', 16)}</button>
@@ -296,9 +330,11 @@ export function renderRadar(container, ctx) {
     const posts = [...result.posts];
     if (radarState.sort === 'new') posts.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
     const counts = result.sources.filter((source) => source.count > 0);
-    out.innerHTML = `${overview(result, counts, loading, ctx.isFollowed(radarState.topic))}
+    out.innerHTML = `${nativeSearchRow(radarState.topic)}
+      ${overview(result, counts, loading, ctx.isFollowed(radarState.topic))}
       <div class="radar-grid radar-body">${feed(result, posts, loading)}${references(result, counts, allLinks)}</div>`;
 
+    mountWebClips(out, radarState.topic, radarState.platform, ctx);
     for (const meter of out.querySelectorAll('[data-ratio]'))
       meter.style.width = `${Number(meter.dataset.ratio) * 100}%`;
     out.querySelector('#follow-topic').onclick = () => {
@@ -306,7 +342,16 @@ export function renderRadar(container, ctx) {
       render();
     };
     out.querySelector('#draft-topic').onclick = () => ctx.composeFrom(radarState.topic);
-    out.querySelector('#refresh').onclick = () => load(true);
+    const refresh = out.querySelector('#refresh');
+    if (refresh) refresh.onclick = () => load(true);
+    const paid = out.querySelector('#paid-x-search');
+    if (paid)
+      paid.onclick = () => {
+        if (window.confirm('这次搜索将使用已配置的 X API 凭证，可能产生平台费用。继续查询最近 7 天？')) {
+          radarState.days = 7;
+          load(true, 'x-api');
+        }
+      };
     for (const button of out.querySelectorAll('[data-days]')) {
       button.onclick = () => {
         const days = Number(button.dataset.days);
@@ -344,7 +389,7 @@ export function renderRadar(container, ctx) {
       };
   }
 
-  async function load(refresh = false) {
+  async function load(refresh = false, source = radarState.platform) {
     const revision = ++generation;
     loading = true;
     result = emptyResult;
@@ -353,7 +398,7 @@ export function renderRadar(container, ctx) {
     const params = new URLSearchParams({
       topic: radarState.topic,
       days: String(radarState.days),
-      platform: radarState.platform,
+      platform: source,
     });
     if (refresh) params.set('refresh', '1');
     let next;

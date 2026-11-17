@@ -162,13 +162,10 @@ test('one unavailable source retains the other, and upstream failure is distinct
 
 test('provider prerequisites and parameter errors have actionable statuses', async () => {
   const discover = make(fail);
-  for (const platform of ['x', 'xiaohongshu']) {
-    const report = await discover({ topic: 'test', platform });
-    assert.equal(report.mode, 'unavailable');
-    assert.equal(report.sources[0].status, 'unconfigured');
-    assert.equal(report.sources[0].count, 0);
-  }
-  const outOfRange = await make(fail, { X_BEARER_TOKEN: 'test' })({ platform: 'x', days: 30 });
+  const noCredentials = await discover({ topic: 'test', platform: 'x-api' });
+  assert.equal(noCredentials.mode, 'unavailable');
+  assert.equal(noCredentials.sources[0].status, 'unconfigured');
+  const outOfRange = await make(fail, { X_BEARER_TOKEN: 'test' })({ platform: 'x-api', days: 30 });
   assert.equal(outOfRange.sources[0].status, 'unsupported');
   for (const params of [
     { topic: ' ' },
@@ -178,4 +175,98 @@ test('provider prerequisites and parameter errors have actionable statuses', asy
   ]) {
     await assert.rejects(discover(params), { statusCode: 400 });
   }
+});
+
+test('ordinary search and refresh never contact the metered X endpoint, even with credentials', async () => {
+  const requests = [];
+  const discover = make(
+    async (url) => {
+      requests.push(url);
+      if (url.hostname === 'hn.algolia.com') return { hits: [] };
+      if (url.hostname === 'api.github.com') return { items: [] };
+      if (url.hostname === 'api.x.com')
+        return { data: [{ id: '5', text: 'testing', created_at: now().toISOString(), author_id: '4' }] };
+      throw new Error('unexpected host');
+    },
+    { X_BEARER_TOKEN: 'fixture' },
+  );
+  assert.equal((await discover({ topic: '机器人' })).mode, 'live');
+  await discover({ topic: '机器人', refresh: true });
+  const x = await discover({ topic: '机器人', platform: 'x' });
+  await discover({ topic: '机器人', platform: 'x', refresh: true });
+  assert.ok(x.paidSearchAvailable);
+  assert.equal(x.mode, 'web');
+  assert.equal(requests.filter((url) => url.hostname === 'api.x.com').length, 0);
+  const paid = await discover({ topic: '机器人', platform: 'x-api' });
+  assert.equal(paid.total, 1);
+  assert.equal(paid.posts[0].platform, 'x');
+  assert.equal(requests.filter((url) => url.hostname === 'api.x.com').length, 1);
+  assert.equal((await discover({ topic: '机器人', platform: 'x' })).mode, 'web');
+});
+
+test('native X, LinkedIn and Xiaohongshu search preserves the topic and produces no activity sample', async () => {
+  const urls = [];
+  const discover = make((url) => {
+    urls.push(url);
+  });
+  const topic = '机器人 & C++ #1';
+  for (const [platform, key, hostname] of [
+    ['x', 'q', 'x.com'],
+    ['linkedin', 'keywords', 'www.linkedin.com'],
+    ['xiaohongshu', 'keyword', 'www.xiaohongshu.com'],
+  ]) {
+    const result = await discover({ topic, platform, refresh: true });
+    assert.equal(result.mode, 'web');
+    assert.equal(result.asOf, null);
+    assert.equal(result.sources[0].status, 'web');
+    const url = new URL(result.nativeSearchUrl);
+    assert.equal(url.hostname, hostname);
+    assert.equal(url.searchParams.get(key), topic);
+    assert.deepEqual(result.posts, []);
+    assert.deepEqual(result.series, []);
+    assert.equal(result.paidSearchAvailable, undefined);
+  }
+  assert.equal(urls.length, 0);
+});
+
+test('30-day all stays live for the full healthy cache when X credentials are configured', async () => {
+  let clock = now().getTime();
+  const hosts = [];
+  const discover = createDiscoveryService({
+    env: { X_BEARER_TOKEN: 'fixture' },
+    now: () => new Date(clock),
+    request: async (url) => {
+      hosts.push(url.hostname);
+      if (url.hostname === 'hn.algolia.com') return { hits: [] };
+      if (url.hostname === 'api.github.com') return { items: [] };
+      throw new Error('unexpected upstream');
+    },
+  });
+  const query = { topic: '咖啡豆', days: 30 };
+  const result = await discover(query);
+  assert.equal(result.mode, 'live');
+  assert.deepEqual(
+    result.sources.map((source) => source.id),
+    ['hn', 'github'],
+  );
+  clock += 31_000; // A partial response would have expired here.
+  assert.deepEqual(await discover(query), result);
+  clock += 268_000;
+  assert.deepEqual(await discover(query), result);
+  assert.equal(hosts.length, 2);
+  clock += 1_001;
+  assert.notEqual((await discover(query)).asOf, result.asOf);
+  const unsupported = await discover({ ...query, platform: 'x-api', refresh: true });
+  assert.equal(unsupported.sources[0].status, 'unsupported');
+  assert.equal(unsupported.mode, 'unavailable');
+  const manual = await discover({ ...query, refresh: true });
+  assert.equal(manual.mode, 'live');
+  assert.deepEqual(hosts, [
+    'hn.algolia.com',
+    'api.github.com',
+    'hn.algolia.com',
+    'api.github.com',
+    'hn.algolia.com',
+    'api.github.com',
+  ]);
 });

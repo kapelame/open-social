@@ -2,72 +2,11 @@ import { api, escapeHtml as esc, glyph, heading, platformBadge, platforms } from
 import { renderOperations } from './studio-operations.js';
 import { normalizeWebP } from './studio-media.js';
 
-const draftKey = 'open-social.studio.draft.v1';
-const selectedIds = new Set(platforms.map((platform) => platform.id));
-const acceptedTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+import { acceptedTypes, browserDraftStore, draftContent, draftKey } from './studio-draft.js';
+export { seedStudioDraft } from './studio-draft.js';
+
 const platformName = (id) => platforms.find((platform) => platform.id === id)?.name || '';
 const mediaURL = (media) => '/media/' + encodeURIComponent(media.id);
-const textValue = (value) => (typeof value === 'string' ? value : '');
-const freshDraft = () => ({
-  text: '',
-  title: '',
-  overrides: {},
-  selected: ['x', 'xiaohongshu', 'linkedin'],
-  media: [],
-  mode: 'auto',
-  pending: null,
-});
-
-function loadDraft() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(draftKey));
-    if (!raw || typeof raw !== 'object') return freshDraft();
-    const draft = freshDraft();
-    draft.text = textValue(raw.text);
-    draft.title = textValue(raw.title);
-    draft.mode = ['live', 'demo'].includes(raw.mode) ? raw.mode : 'auto';
-    draft.selected = Array.isArray(raw.selected)
-      ? [...new Set(raw.selected.filter((id) => selectedIds.has(id)))]
-      : draft.selected;
-    draft.overrides = Object.fromEntries(
-      Object.entries(raw.overrides || {}).filter(
-        ([id, value]) => selectedIds.has(id) && typeof value === 'string',
-      ),
-    );
-    draft.media = Array.isArray(raw.media)
-      ? raw.media
-          .filter(
-            (item) =>
-              item && typeof item.id === 'string' && item.id.length < 200 && acceptedTypes.has(item.mime),
-          )
-          .map(({ id, name, mime }) => ({ id, name: textValue(name), mime }))
-      : [];
-    draft.pending =
-      raw.pending && typeof raw.pending.key === 'string' && typeof raw.pending.id === 'string'
-        ? raw.pending
-        : null;
-    return draft;
-  } catch {
-    return freshDraft();
-  }
-}
-
-function storeDraft(draft) {
-  try {
-    localStorage.setItem(draftKey, JSON.stringify(draft));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function seedStudioDraft({ text, title, append = true } = {}) {
-  const draft = loadDraft();
-  const seed = textValue(text).trim();
-  if (seed) draft.text = append && draft.text.trim() ? draft.text.trimEnd() + '\n\n' + seed : seed;
-  if (title && (!append || !draft.title)) draft.title = title;
-  storeDraft(draft);
-}
 
 const titleLimit = (text) =>
   Math.ceil(
@@ -86,8 +25,35 @@ function suggestedTitle(text) {
   return title;
 }
 
+const deliveryModes = {
+  browser: {
+    label: '网页发布',
+    hint: '在队列中打开平台网页，用当前浏览器账号确认发布。',
+    icon: 'external',
+    action: count => `准备 ${count} 个平台`,
+    accepted: '图文已就绪，请到平台网页完成发布',
+  },
+  live: {
+    label: '自动投递',
+    hint: '后台将用已连接的发布渠道发送图文，提交后可关闭网页。',
+    icon: 'send',
+    action: count => `自动投递到 ${count} 个平台`,
+    accepted: '已加入自动投递队列',
+  },
+  demo: {
+    label: '本机演练',
+    hint: '演练记录保存在本机，草稿可继续编辑。',
+    icon: 'activity',
+    action: count => `演练 ${count} 个平台`,
+    accepted: '演练已提交，草稿已保留',
+  },
+};
+
 function renderComposer(container, ctx) {
-  const draft = loadDraft();
+  const store = browserDraftStore();
+  let draft = store.read();
+  let writes = 0;
+  let lastSave = Promise.resolve(true);
   let editing = 'shared';
   let preview = draft.selected[0] || 'x';
   let channels = [];
@@ -152,7 +118,7 @@ function renderComposer(container, ctx) {
       ? draft.mode
       : draft.selected.length && draft.selected.every(isConnected)
         ? 'live'
-        : 'demo';
+        : 'browser';
   const content = (id) => (Object.hasOwn(draft.overrides, id) ? draft.overrides[id] : draft.text);
   const noteTitle = () => draft.title.trim() || suggestedTitle(content('xiaohongshu'));
   const selected = (id) => draft.selected.includes(id);
@@ -161,20 +127,64 @@ function renderComposer(container, ctx) {
     el('save').innerHTML =
       glyph(saved ? 'check' : 'alert', 14) + (saved ? '草稿已在本机保存' : '浏览器未能保存草稿');
   };
-  const save = () => {
-    saved = storeDraft(draft);
-    submittingError = '';
-    showSave();
+  function syncDraft() {
+    if (writes || busy || !saved || !current()) return;
+    const latest = store.read();
+    const changed = draftContent(latest) !== draftContent(draft);
+    draft = latest;
+    if (changed) {
+      drawTargets();
+      drawEditor(true);
+      drawMedia();
+      drawPreview();
+      drawSubmission();
+    }
+  }
+  const syncStorage = event => {
+    if (event.key === draftKey || event.key === null) syncDraft();
   };
+  window.addEventListener('storage', syncStorage, { signal: ctx.signal });
+  window.addEventListener('focus', syncDraft, { signal: ctx.signal });
+
+  function edit(change, id = draft.id) {
+    if (id !== draft.id) return Promise.resolve(false);
+    change(draft);
+    submittingError = '';
+    writes++;
+    lastSave = store.edit(id, change).then(() => {
+      saved = true;
+      return true;
+    }, error => {
+      saved = error.name === 'DraftConflictError';
+      submittingError = saved ? error.message : '浏览器未能保存草稿，请先保留当前文案。';
+      return false;
+    }).finally(() => {
+      writes--;
+      if (current()) {
+        showSave();
+        syncDraft();
+        if (submittingError) drawSubmission();
+      }
+    });
+    return lastSave;
+  }
 
   function drawTargets() {
+    const mode = actualMode();
+    const destinationStatus = (id) => {
+      if (mode === 'browser') return '网页发布';
+      if (mode === 'demo') return '本机演练';
+      if (fetchingChannels) return '检查中';
+      if (isConnected(id)) return '自动投递已连接';
+      return channelError ? '连接状态未知' : '自动投递待连接';
+    };
     el('destinations').innerHTML = platforms
       .map(
         ({
           id,
           name,
         }) => `<button type="button" data-destination="${id}" class="st-destination ${selected(id) ? 'is-selected' : ''}" aria-pressed="${selected(id)}">
-      ${platformBadge(id)}<span class="st-destination-info"><strong>${name}</strong><small><i class="st-indicator ${isConnected(id) ? 'is-online' : ''}"></i>${fetchingChannels ? '检查中' : isConnected(id) ? '已连接' : channelError ? '状态未知' : '未连接'}</small></span><span class="st-selection">${selected(id) ? glyph('check', 11) : ''}</span></button>`,
+      ${platformBadge(id)}<span class="st-destination-info"><strong>${name}</strong><small><i class="st-indicator ${mode === 'live' && isConnected(id) ? 'is-online' : ''}"></i>${destinationStatus(id)}</small></span><span class="st-selection">${selected(id) ? glyph('check', 11) : ''}</span></button>`,
       )
       .join('');
   }
@@ -316,23 +326,21 @@ function renderComposer(container, ctx) {
       if (fetchingChannels) return '正在检查渠道连接。';
       if (channelError) return '渠道状态读取失败。请前往「管理渠道」检查连接。';
       const missing = draft.selected.filter((id) => !isConnected(id));
-      if (missing.length) return '请先连接' + missing.map(platformName).join('、') + '，或切换为本机演练。';
+      if (missing.length) return '请先连接' + missing.map(platformName).join('、') + '的自动投递，或切换为网页发布。';
     }
     return '';
   }
 
   function drawSubmission() {
-    const demo = actualMode() === 'demo';
-    el('modes').innerHTML =
-      `<button type="button" data-mode="demo" aria-pressed="${demo}" class="${demo ? 'active' : ''}">本机演练</button><button type="button" data-mode="live" aria-pressed="${!demo}" class="${demo ? '' : 'active'}">真实发布</button>`;
-    el('hint').textContent = demo
-      ? '在本机演练发布流程，内容仅保存在当前工作区。'
-      : '所选渠道将收到这篇帖子，提交后可关闭此页面。';
+    const mode = actualMode();
+    const count = draft.selected.length;
+    const option = deliveryModes[mode];
+    el('modes').innerHTML = Object.entries(deliveryModes).map(([id, item]) =>
+      `<button type="button" data-mode="${id}" aria-pressed="${mode === id}" class="${mode === id ? 'active' : ''}">${item.label}</button>`,
+    ).join('');
+    el('hint').textContent = option.hint;
     el('submit').disabled = busy || uploading || (fetchingChannels && draft.mode === 'auto');
-    el('submit').innerHTML =
-      glyph(demo ? 'activity' : 'send', 17) +
-      (busy ? '正在提交…' : demo ? '提交演练' : '发布到所选平台') +
-      `<span>${draft.selected.length} 个平台</span>`;
+    el('submit').innerHTML = glyph(option.icon, 17) + (busy ? '正在提交…' : option.action(count));
     el('error').hidden = !submittingError;
     el('error').textContent = submittingError;
   }
@@ -348,28 +356,31 @@ function renderComposer(container, ctx) {
     return { media: { id: media.id, name: media.name, mime: media.mime }, animated: prepared.animated };
   }
 
-  async function updateLegacyImages() {
+  async function updateLegacyImages(snapshot) {
     if (!selected('xiaohongshu') && !selected('linkedin')) return;
     let convertedCount = 0;
-    for (const [index, media] of draft.media.entries()) {
+    for (const [index, media] of snapshot.media.entries()) {
       if (media.mime !== 'image/webp') continue;
       const response = await fetch(mediaURL(media));
       if (!response.ok) throw new Error('草稿里的 WebP 图片无法读取，请重新添加。');
       const original = new File([await response.blob()], media.name || 'image.webp', { type: media.mime });
       const converted = await saveImage(original);
       if (!current()) return;
-      draft.media[index] = converted.media;
+      await store.edit(snapshot.id, latest => {
+        const index = latest.media.findIndex(image => image.id === media.id);
+        if (index < 0) throw new Error('配图已在其他标签页更改，请检查草稿。');
+        latest.media[index] = converted.media;
+      });
+      snapshot.media[index] = converted.media;
       convertedCount++;
       el('upload-status').hidden = false;
       el('upload-status').textContent = `已将草稿中的 ${convertedCount} 张 WebP 转为跨平台配图。`;
-      save();
-      drawMedia();
-      drawPreview();
     }
   }
 
   async function upload(files) {
     if (busy || uploading || !files.length) return;
+    const draftId = draft.id;
     uploading = true;
     submittingError = '';
     el('upload-status').hidden = false;
@@ -389,11 +400,12 @@ function renderComposer(container, ctx) {
         el('upload-status').textContent = `正在处理图片 ${complete + 1} / ${files.length}…`;
         const prepared = await saveImage(file);
         if (!current()) return;
-        draft.media.push(prepared.media);
+        if (!await edit(latest => latest.media.push(prepared.media), draftId)) {
+          throw new Error('草稿已更改或图片未能保存，请检查当前草稿。');
+        }
         if (file.type === 'image/webp') converted++;
         if (prepared.animated) animated = true;
         complete++;
-        save();
         drawPreview();
         drawMedia();
       }
@@ -420,6 +432,7 @@ function renderComposer(container, ctx) {
       drawSubmission();
       return;
     }
+    const snapshot = structuredClone(draft);
     const mode = actualMode();
     const targets = platforms
       .filter(({ id }) => selected(id))
@@ -432,28 +445,20 @@ function renderComposer(container, ctx) {
     drawSubmission();
     page.setAttribute('inert', '');
     try {
-      await updateLegacyImages();
+      if (!(await lastSave)) throw new Error('请先确认草稿已保存，再次提交。');
+      await updateLegacyImages(snapshot);
       if (!current()) return;
-      const payload = { mode, targets, mediaIds: draft.media.map((media) => media.id) };
-      const key = JSON.stringify(payload);
-      const requestId = draft.pending?.key === key ? draft.pending.id : crypto.randomUUID();
-      draft.pending = { id: requestId, key };
-      save();
+      const payload = { mode, targets, mediaIds: snapshot.media.map((media) => media.id) };
+      const { id: requestId, revision } = await store.reserve(snapshot, payload);
+      snapshot.revision = revision;
       await api('/api/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, requestId }),
       });
-      // Preserve the text and images after a rehearsal so the same draft can go live.
-      const latest = loadDraft();
-      if (latest.pending?.id === requestId && JSON.stringify(latest) === JSON.stringify(draft)) {
-        if (payload.mode === 'demo') {
-          latest.pending = null;
-          storeDraft(latest);
-        } else storeDraft(freshDraft());
-      }
+      await store.finish(snapshot, requestId, mode);
       if (current()) {
-        ctx.toast?.(payload.mode === 'demo' ? '演练已提交，草稿已保留' : '已加入发布队列');
+        ctx.toast?.(deliveryModes[payload.mode].accepted);
         ctx.refreshShell?.();
         ctx.navigate('queue');
       }
@@ -463,6 +468,7 @@ function renderComposer(container, ctx) {
       busy = false;
       if (current()) {
         page.removeAttribute('inert');
+        syncDraft();
         drawSubmission();
         drawMedia();
       }
@@ -475,10 +481,11 @@ function renderComposer(container, ctx) {
     if (button.hasAttribute('data-channels')) return ctx.navigate('channels');
     if (button.dataset.destination) {
       const id = button.dataset.destination;
-      draft.selected = selected(id)
-        ? draft.selected.filter((value) => value !== id)
-        : [...draft.selected, id];
-      save();
+      const enable = !selected(id);
+      edit(latest => {
+        if (enable && !latest.selected.includes(id)) latest.selected.push(id);
+        if (!enable) latest.selected = latest.selected.filter(value => value !== id);
+      });
       drawTargets();
       drawEditor(true);
       drawPreview();
@@ -492,18 +499,19 @@ function renderComposer(container, ctx) {
       preview = button.dataset.previewPlatform;
       drawPreview();
     } else if (button.dataset.mode) {
-      draft.mode = button.dataset.mode;
-      save();
+      const mode = button.dataset.mode;
+      edit(latest => { latest.mode = mode; });
+      drawTargets();
       drawSubmission();
     } else if (button.hasAttribute('data-remove') && !uploading) {
-      draft.media.splice(Number(button.dataset.remove), 1);
-      save();
+      const id = draft.media[Number(button.dataset.remove)]?.id;
+      edit(latest => { latest.media = latest.media.filter(image => image.id !== id); });
       drawMedia();
       drawPreview();
       drawSubmission();
     } else if (button.hasAttribute('data-revert') && editing !== 'shared') {
-      delete draft.overrides[editing];
-      save();
+      const platform = editing;
+      edit(latest => { delete latest.overrides[platform]; });
       drawEditor(true);
       drawPreview();
       drawSubmission();
@@ -512,16 +520,19 @@ function renderComposer(container, ctx) {
     }
   });
   el('copy').addEventListener('input', (event) => {
-    if (editing === 'shared') draft.text = event.target.value;
-    else draft.overrides[editing] = event.target.value;
-    save();
+    const platform = editing;
+    const value = event.target.value;
+    edit(latest => {
+      if (platform === 'shared') latest.text = value;
+      else latest.overrides[platform] = value;
+    });
     drawEditor();
     drawPreview();
     drawSubmission();
   });
   el('title').addEventListener('input', (event) => {
-    draft.title = event.target.value;
-    save();
+    const title = event.target.value;
+    edit(latest => { latest.title = title; });
     drawEditor();
     drawPreview();
     drawSubmission();

@@ -50,7 +50,7 @@ function validateContent(target, images) {
 function normalize(payload) {
   const { requestId, mode, mediaIds = [], targets } = payload ?? {};
   if (typeof requestId !== 'string' || !fieldId.test(requestId)) reject('请提供有效的请求编号。');
-  if (!['live', 'demo'].includes(mode)) reject('请选择正式发布或演练模式。');
+  if (!['browser', 'live', 'demo'].includes(mode)) reject('请选择网页发布、自动投递或本机演练。');
   if (
     !Array.isArray(mediaIds) ||
     mediaIds.length > 20 ||
@@ -119,13 +119,13 @@ export function createQueue({
   );
   recover.run(interrupted);
   const due = db.prepare(`SELECT t.*, j.mode, j.media_ids FROM publish_targets t
-    JOIN publish_jobs j ON t.job_id = j.id WHERE t.status = 'queued' AND t.next_at <= ?
+    JOIN publish_jobs j ON t.job_id = j.id WHERE j.mode IN ('live', 'demo') AND t.status = 'queued' AND t.next_at <= ?
     ORDER BY j.rowid, t.position LIMIT 1`);
   const insertJob = db.prepare(
     'INSERT INTO publish_jobs(id, request_id, digest, mode, created_at, media_ids) VALUES (?, ?, ?, ?, ?, ?)',
   );
   const insertTarget = db.prepare(
-    "INSERT INTO publish_targets(job_id, position, platform, text, title, status) VALUES (?, ?, ?, ?, ?, 'queued')",
+    'INSERT INTO publish_targets(job_id, position, platform, text, title, status) VALUES (?, ?, ?, ?, ?, ?)',
   );
   const claim = db.prepare(
     "UPDATE publish_targets SET status = 'running', attempts = attempts + 1 WHERE job_id = ? AND platform = ?",
@@ -134,6 +134,8 @@ export function createQueue({
     next_at = ? WHERE job_id = ? AND platform = ?`);
   const requeue = db.prepare(`UPDATE publish_targets SET status = 'queued', attempts = 0, next_at = 0,
     message = NULL WHERE job_id = ? AND platform = ? AND status IN ('blocked', 'failed')`);
+  const confirmTarget = db.prepare(`UPDATE publish_targets SET status = 'user_confirmed'
+    WHERE job_id = ? AND platform = ? AND status IN ('awaiting_user', 'user_confirmed')`);
 
   let started = false;
   let active;
@@ -141,11 +143,17 @@ export function createQueue({
   let timer;
 
   function jobView(row) {
+    const mediaIds = JSON.parse(row.media_ids);
+    const browserMedia = row.mode === 'browser' ? mediaIds.flatMap((id) => {
+      const image = loadMedia(id);
+      return image ? [{ id, name: image.name, mime: image.mime }] : [];
+    }) : undefined;
     return {
       id: row.id,
       mode: row.mode,
       createdAt: row.created_at,
-      mediaIds: JSON.parse(row.media_ids),
+      mediaIds,
+      ...(browserMedia && { media: browserMedia }),
       targets: targetsFor.all(row.id).map((target) => ({
         platform: target.platform,
         title: target.title,
@@ -183,11 +191,24 @@ export function createQueue({
       for (const target of targets) validateContent(target, images);
       const id = randomUUID();
       insertJob.run(id, requestId, digest, mode, new Date(now()).toISOString(), JSON.stringify(mediaIds));
-      targets.forEach(({ platform, text, title }, i) => insertTarget.run(id, i, platform, text, title));
+      const status = mode === 'browser' ? 'awaiting_user' : 'queued';
+      targets.forEach(({ platform, text, title }, i) => insertTarget.run(id, i, platform, text, title, status));
       return jobView(findJob.get(id));
     });
-    wake();
+    if (mode !== 'browser') wake();
     return job;
+  }
+
+  function confirm(id, platform) {
+    if (!platforms.has(platform)) reject('请选择有效的平台。');
+    return transaction(db, () => {
+      const row = findJob.get(id);
+      if (!row) reject('找不到发布任务。', 404);
+      if (row.mode !== 'browser' || !confirmTarget.run(id, platform).changes) {
+        reject('只有此任务包含的网页发布渠道可以手动确认。', 409);
+      }
+      return jobView(row);
+    });
   }
 
   function retry(id, platform) {
@@ -301,6 +322,7 @@ export function createQueue({
 
   return {
     enqueue,
+    confirm,
     retry,
     list: () => allJobs.all().map(jobView),
     start() {

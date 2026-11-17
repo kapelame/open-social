@@ -1,7 +1,11 @@
 # 话题雷达主图
 
-[主图](../public/art/observatory.webp) 使用 Codex 内建 ImageGen 生成，发布文件采用 WebP 格式。深墨绿色的夜空给话题标题留出空间。右侧射电望远镜的朱橙色侧光与界面强调色呼应。
+钴蓝色桌面上，一张琥珀橙色唱片正在便携唱机上转动。唱片槽纹、银色唱臂和斜射进来的日光集中在右侧。左侧的蓝色留给工作台叠加用户搜索的话题。图片采用横向 WebP。[查看主图](../public/art/airwaves.webp)
 
-## 生成提示词
+## 来源与使用
 
-Use case: photorealistic-natural. Create an ultra-wide panoramic (2.5:1) hero photograph for Open Social, a social-topic observatory. A monumental, realistic parabolic radio telescope points up toward the left, its fine wire lattice face, three feed support arms and weathered precision-machined trusses lit with a single saturated vermilion-orange grazing light against near-black bottle-green sky with very faint pinprick stars. Close, low-angle architectural editorial photograph with subtle analog grain, deep shadows, crisp tactile metal and extraordinary scale. Bold, minimal, calm Swiss science-journal art direction, photograph only. Strong asymmetric framing: position the large dramatic face of the dish and all foreground structures in the RIGHT two-thirds, with the dish toward the upper-right and its base leaving the frame at bottom-right; preserve the LEFT 38% as almost completely clear dark, low-contrast negative space for later white type. Single seamless photograph, no panels, no letters, no numerals, no logos, no watermarks, no typographic or graphic overlays.
+这张图于 2026 年 11 月 17 日通过 Codex 内建 ImageGen 为 Open Social 生成，使用纯文字提示。WebP 随项目分发，使用方式见[仓库许可证](../LICENSE)。
+
+## 实际生成提示词
+
+> Create a single ultra-wide 2.5:1 editorial product photograph for the Open Social topic discovery dashboard. On the right, a tangible midcentury-inspired portable ivory record player on a richly saturated cobalt-blue tabletop holds a magnificent translucent tangerine-orange vinyl record. Its orange edge glows, concentric microgrooves catch the light, and an understated blank cream center label gives the disc a graphic punctuation. Detailed brushed silver tonearm with a tiny coral cartridge in a mechanically plausible position. Crop the oversized turntable confidently at the right and bottom edges, retaining the record center and the arm. Shoot almost overhead at a slight oblique angle, composed like an independent music magazine cover. Hard diagonal morning window light throws clean sculptural shadows and a restrained glint of orange caustic light near the record. Real surface texture, polished hardware, warm ivory, luminous amber, deep French ultramarine; restrained natural film grain. Let the LEFT 42 percent be uninterrupted, even, dark saturated cobalt blue negative space for later white typography. Keep all bright objects and shadows from crossing that left field. The photograph should read as one bright, bold analog object at a small web-card size. Photographic realism, crisp fine detail, rich graphic color, no writing, symbols, logos, stickers, graphic overlays, faux dashboard, borders, stars or watermarks.

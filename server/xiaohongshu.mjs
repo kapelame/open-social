@@ -5,13 +5,13 @@ function failure(message, { retryable = false, uncertain = false } = {}) {
   return Object.assign(new Error(message), { retryable, uncertain });
 }
 
-function bridgeBase() {
-  if (!process.env.XHS_BRIDGE_URL?.trim()) {
+function bridgeBase(env) {
+  if (!env.XHS_BRIDGE_URL?.trim()) {
     throw failure('请先设置 XHS_BRIDGE_URL，启动小红书桥接并扫码登录。');
   }
   let base;
   try {
-    base = new URL(process.env.XHS_BRIDGE_URL);
+    base = new URL(env.XHS_BRIDGE_URL);
   } catch {
     throw failure('XHS_BRIDGE_URL 应为桥接服务的 HTTP 或 HTTPS 根地址。');
   }
@@ -29,10 +29,10 @@ function bridgeBase() {
 
 // Only server-side callers select endpoints. Never follow redirects carrying a private
 // image path, text, or the self-hosted bridge's access token.
-export async function xhsBridgeRequest(endpoint, { method = 'GET', body, timeoutMs = 12000 } = {}) {
+export async function xhsBridgeRequest(endpoint, { method = 'GET', body, timeoutMs = 12000, env = process.env } = {}) {
   if (!endpoint.startsWith('/api/v1/')) throw failure('无效的小红书桥接接口。');
-  const url = bridgeBase() + endpoint;
-  const token = process.env.XHS_BRIDGE_TOKEN?.trim();
+  const url = bridgeBase(env) + endpoint;
+  const token = env.XHS_BRIDGE_TOKEN?.trim();
   const headers = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -56,8 +56,8 @@ export async function xhsBridgeRequest(endpoint, { method = 'GET', body, timeout
   return { response, json };
 }
 
-async function checkLogin() {
-  const { response, json } = await xhsBridgeRequest('/api/v1/login/status', { timeoutMs: 25000 });
+async function checkLogin(env) {
+  const { response, json } = await xhsBridgeRequest('/api/v1/login/status', { timeoutMs: 25000, env });
   if (response.status === 401 || response.status === 403) {
     throw failure('小红书桥接拒绝了凭证，请检查 XHS_BRIDGE_TOKEN。');
   }
@@ -71,21 +71,21 @@ async function checkLogin() {
   return account ? `已连接 · ${account}` : '已通过自托管桥接登录';
 }
 
-export async function xhsStatus() {
-  const configured = !!process.env.XHS_BRIDGE_URL?.trim();
+export async function xhsStatus(env = process.env) {
+  const configured = !!env.XHS_BRIDGE_URL?.trim();
   const status = { configured, connected: false, connectable: false };
   if (!configured) return { ...status, detail: '配置自托管桥接并扫码后，即可发布图文。' };
   try {
-    const detail = await checkLogin();
+    const detail = await checkLogin(env);
     return { ...status, connected: true, detail };
   } catch (error) {
     return { ...status, detail: error.message };
   }
 }
 
-async function bridgeImagePaths(images) {
-  const hostDir = process.env.XHS_LOCAL_MEDIA_DIR?.trim();
-  const serviceDir = process.env.XHS_BRIDGE_MEDIA_DIR?.trim();
+async function bridgeImagePaths(images, env) {
+  const hostDir = env.XHS_LOCAL_MEDIA_DIR?.trim();
+  const serviceDir = env.XHS_BRIDGE_MEDIA_DIR?.trim();
   if (!!hostDir !== !!serviceDir || (serviceDir && !path.posix.isAbsolute(serviceDir))) {
     throw failure('容器映射需要同时填写 XHS_LOCAL_MEDIA_DIR 和容器内的绝对目录 XHS_BRIDGE_MEDIA_DIR。');
   }
@@ -117,15 +117,16 @@ async function bridgeImagePaths(images) {
   );
 }
 
-export async function publishXhs({ title, text, images }) {
+export async function publishXhs({ title, text, images }, env = process.env) {
   if (typeof title !== 'string' || !title.trim()) throw failure('小红书图文需要标题。');
   // The bridge counts each ASCII UTF-16 code unit as half a Chinese character.
   if (title.replace(/[^\x00-\x7F]/g, 'xx').length > 40) throw failure('小红书标题最多 20 个中文字宽度。');
   if (typeof text !== 'string' || !text.trim()) throw failure('请填写小红书正文。');
   if (!Array.isArray(images) || !images.length) throw failure('小红书图文至少需要一张图片。');
-  const localPaths = await bridgeImagePaths(images);
-  await checkLogin();
+  const localPaths = await bridgeImagePaths(images, env);
+  await checkLogin(env);
   const { response, json } = await xhsBridgeRequest('/api/v1/publish', {
+    env,
     method: 'POST',
     timeoutMs: 330000,
     body: { title, content: text, images: localPaths },

@@ -1,6 +1,10 @@
-# 连接小红书
+# 使用小红书账号
 
-同时发一张图到三个平台时，小红书需要给笔记填写标题，还需要一个能使用你创作中心账号的发布端。Open Social 支持连接你自行运行的第三方服务 xiaohongshu-mcp。开放平台目前把发布笔记的 `write_notes` 权限列为规划中，桥接使用你扫码登录的创作中心会话。[官方授权范围](https://openaccount.xiaohongshu.com/docs/scope) · [桥接项目](https://github.com/xpzouying/xiaohongshu-mcp)
+在「渠道连接」打开小红书创作中心，用自己的浏览器账号登录。用「网页发布」准备笔记后，从队列复制标题与正文、下载配图，在创作中心确认发布，然后回队列记录「我已在平台发布」。搜索时点击「原站搜索 → 小红书」会带着话题关键词打开小红书搜索页。[网页发布步骤](setup.md)
+
+## 可选的自托管连接器
+
+要让后台收录笔记样本或投递图文，可以接入已登录的第三方开源服务 xiaohongshu-mcp。桥接器使用你扫码登录的创作中心会话。开放平台目前把 `write_notes` 列为规划中。[官方授权范围](https://openaccount.xiaohongshu.com/docs/scope) · [桥接项目](https://github.com/xpzouying/xiaohongshu-mcp)
 
 ### 1. 在本机启动服务，登录自己的账号
 
@@ -10,7 +14,7 @@
 
 ### 2. 让 Open Social 找到桥接和图片
 
-在工作台「渠道连接 → 小红书 → 配置渠道」中检测本机连接器或填写桥接根地址，按需填入鉴权令牌并保存。若使用环境文件，同机部署只需在 `.env` 中设置以下地址，启用鉴权时再添加 `XHS_BRIDGE_TOKEN`。
+在工作台「渠道连接 → 小红书 → 自动投递设置 → 配置渠道」中检测本机连接器或填写桥接根地址，按需填入鉴权令牌并保存。若使用环境文件，同机部署可在 `.env` 中设置以下地址。启用鉴权时再添加 `XHS_BRIDGE_TOKEN`。
 
 ```dotenv
 XHS_BRIDGE_URL=http://127.0.0.1:18060
@@ -36,6 +40,6 @@ XHS_BRIDGE_MEDIA_DIR=/app/images
 
 ### 3. 检查渠道，再投递图文
 
-表单保存后可直接刷新小红书连接状态。使用环境文件时，先重启 Open Social。看到账号昵称或已连接状态后，在编辑器中选择小红书，填写标题和正文，添加至少一张图片。标题上限相当于 20 个中文字或 40 个英文字母。一次提交即可将选择的各个平台分别加入后台队列。[上游标题计数](https://github.com/xpzouying/xiaohongshu-mcp/blob/main/pkg/xhsutil/title.go)
+表单保存后可直接刷新小红书连接状态。使用环境文件时，先重启 Open Social。看到账号昵称或已连接状态后，在编辑器中选择小红书和「自动投递」，填写标题和正文，添加至少一张图片。标题上限相当于 20 个中文字或 40 个英文字母。一次提交即可将选择的各个平台分别加入后台队列。[上游标题计数](https://github.com/xpzouying/xiaohongshu-mcp/blob/main/pkg/xhsutil/title.go)
 
 上游桥接在点击发布后等待创作页面跳转，再返回标题、正文、图片数和完成状态。Open Social 将这些字段与任务核对后记录提交成功。平台审核与最终公开状态可以在创作中心查看，桥接的回执中没有公开笔记链接。若出现超时、连接中断或回执不完整，先去创作中心检查该篇笔记，再决定是否重新提交，以免重复发布。[上游提交确认逻辑](https://github.com/xpzouying/xiaohongshu-mcp/blob/bb6fa2e208719ee634fec37881be29d3aa4699b3/xiaohongshu/publish.go#L459-L477) · [发布接口与回执](https://github.com/xpzouying/xiaohongshu-mcp/blob/main/docs/API.md)

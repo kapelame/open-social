@@ -1,22 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { getAccess, getOAuthStatus, markAccessRejected } from './oauth.mjs';
+import * as defaultOAuth from './oauth.mjs';
 import { publishXhs, xhsStatus } from './xiaohongshu.mjs';
-
-export { startOAuth, finishOAuth, disconnect } from './oauth.mjs';
-
-export async function getChannels(origin) {
-  const [x, linkedin, xiaohongshu] = await Promise.all([
-    getOAuthStatus('x', origin),
-    getOAuthStatus('linkedin', origin),
-    xhsStatus(),
-  ]);
-  return [
-    { id: 'x', label: 'X', ...x },
-    { id: 'linkedin', label: 'LinkedIn', ...linkedin },
-    { id: 'xiaohongshu', label: '小红书', ...xiaohongshu },
-  ];
-}
 
 function failure(message, { uncertain = false, retryable = false } = {}) {
   return Object.assign(new Error(message), { uncertain, retryable: retryable && !uncertain });
@@ -24,8 +9,29 @@ function failure(message, { uncertain = false, retryable = false } = {}) {
 
 const labels = { x: 'X', linkedin: 'LinkedIn' };
 
+function retryDelayMs(headers, platform, status, now) {
+  // Preserve the existing eight-digit delta-seconds range for every timestamp source.
+  // A millisecond Unix stamp in a seconds field must not strand the job for millennia.
+  const longestDelay = 99_999_999_000;
+  const validDelays = [];
+  const consider = (delay) => {
+    if (Number.isSafeInteger(delay) && delay >= 0 && delay <= longestDelay) validDelays.push(delay);
+  };
+  const after = headers.get('retry-after')?.trim();
+  if (after && /^\d+$/.test(after)) consider(Number(after) * 1000);
+  else if (after && /^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*[, ]/i.test(after)) {
+    consider(Date.parse(after) - now);
+  }
+
+  if (platform === 'x' && status === 429) {
+    const reset = headers.get('x-rate-limit-reset')?.trim();
+    if (reset && /^\d+$/.test(reset)) consider(Number(reset) * 1000 - now);
+  }
+  return validDelays.length ? Math.max(...validDelays) : undefined;
+}
+
 // Uploads can be repeated. A lost response while creating the actual post cannot.
-async function request(platform, url, init, creatingPost = false) {
+async function providerRequest(markAccessRejected, platform, url, init, creatingPost = false) {
   let response;
   try {
     response = await fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(45000) });
@@ -58,8 +64,8 @@ async function request(platform, url, init, creatingPost = false) {
     retryable: status === 429 || (!creatingPost && (status >= 500 || status === 408)),
   });
   error.statusCode = status;
-  const after = response.headers.get('retry-after');
-  if (after && /^\d{1,8}$/.test(after)) error.retryAfterMs = Number(after) * 1000;
+  const delay = retryDelayMs(response.headers, platform, status, Date.now());
+  if (delay !== undefined) error.retryAfterMs = delay;
   throw error;
 }
 
@@ -99,7 +105,7 @@ async function readImage(image, platform) {
   return readFile(image.path);
 }
 
-async function uploadX(image, authorization) {
+async function uploadX(image, authorization, request) {
   const bytes = await readImage(image, 'x');
   const endpoint = 'https://api.x.com/2/media/upload';
   const payload = { media: bytes.toString('base64'), media_category: 'tweet_image' };
@@ -123,12 +129,12 @@ async function uploadX(image, authorization) {
   return data.id;
 }
 
-async function publishX({ text, images }) {
+async function publishX({ text, images }, { getAccess, request }) {
   if (images.length > 4) throw failure('X 每条帖子最多可附 4 张图片。');
   const credentials = await getAccess('x');
   const authorization = bearer(credentials.accessToken);
   const ids = [];
-  for (const image of images) ids.push(await uploadX(image, authorization));
+  for (const image of images) ids.push(await uploadX(image, authorization, request));
   const payload = { text };
   if (ids.length) payload.media = { media_ids: ids };
   const response = await request('x', 'https://api.x.com/2/tweets', jsonPost(authorization, payload), true);
@@ -139,7 +145,7 @@ async function publishX({ text, images }) {
   return { remoteId: body.data.id, url: `https://x.com/i/web/status/${body.data.id}` };
 }
 
-async function uploadLinkedIn(image, author, headers) {
+async function uploadLinkedIn(image, author, headers, request) {
   const bytes = await readImage(image, 'linkedin');
   const response = await request(
     'linkedin',
@@ -173,12 +179,12 @@ async function uploadLinkedIn(image, author, headers) {
   return { id: value.image };
 }
 
-async function publishLinkedIn({ text, images }) {
+async function publishLinkedIn({ text, images }, { getAccess, request, env }) {
   if (images.length > 20) throw failure('LinkedIn 每条帖子最多可附 20 张图片。');
   const { accessToken, author } = await getAccess('linkedin');
   if (!/^urn:li:person:[\w-]+$/.test(author ?? ''))
     throw failure('请重新连接 LinkedIn 个人账号，或设置有效的 LINKEDIN_AUTHOR_URN。');
-  const version = process.env.LINKEDIN_API_VERSION || '202609';
+  const version = env.LINKEDIN_API_VERSION || '202609';
   if (!/^20\d{2}(0[1-9]|1[0-2])$/.test(version)) throw failure('LINKEDIN_API_VERSION 需使用 YYYYMM 格式。');
   const headers = {
     ...bearer(accessToken),
@@ -186,7 +192,7 @@ async function publishLinkedIn({ text, images }) {
     'X-Restli-Protocol-Version': '2.0.0',
   };
   const media = [];
-  for (const image of images) media.push(await uploadLinkedIn(image, author, headers));
+  for (const image of images) media.push(await uploadLinkedIn(image, author, headers, request));
   // The Posts API interprets punctuation in its "little" text format. Preserve the user's literal copy.
   const commentary = text.replace(/[|{}@[\]()<>#\\*_~]/g, '\\$&');
   const payload = {
@@ -213,21 +219,57 @@ async function publishLinkedIn({ text, images }) {
   return { remoteId: id, url: `https://www.linkedin.com/feed/update/${id}/` };
 }
 
-export async function publishTarget({ platform, text = '', title = '', images = [], jobId }) {
-  try {
-    if (typeof text !== 'string' || !Array.isArray(images) || (!text.trim() && !images.length)) {
-      throw failure('请填写文案或添加图片。');
-    }
-    const draft = { text, title, images, jobId };
-    if (platform === 'x') return await publishX(draft);
-    if (platform === 'linkedin') return await publishLinkedIn(draft);
-    if (platform === 'xiaohongshu') return await publishXhs(draft);
-    throw failure('所选平台不支持发布。');
-  } catch (error) {
-    if (error.code === 'ENOENT' || error.code === 'EACCES')
-      throw failure('无法读取发布素材或渠道配置，请检查本地文件。');
-    error.uncertain ??= false;
-    error.retryable ??= false;
-    throw error;
+function bindProviders(oauth, env) {
+  const context = {
+    getAccess: oauth.getAccess,
+    request: providerRequest.bind(null, oauth.markAccessRejected),
+    env,
+  };
+
+  async function getChannels(origin) {
+    const [x, linkedin, xiaohongshu] = await Promise.all([
+      oauth.getOAuthStatus('x', origin),
+      oauth.getOAuthStatus('linkedin', origin),
+      xhsStatus(env),
+    ]);
+    return [
+      { id: 'x', label: 'X', ...x },
+      { id: 'linkedin', label: 'LinkedIn', ...linkedin },
+      { id: 'xiaohongshu', label: '小红书', ...xiaohongshu },
+    ];
   }
+
+  async function publishTarget({ platform, text = '', title = '', images = [], jobId }) {
+    try {
+      if (typeof text !== 'string' || !Array.isArray(images) || (!text.trim() && !images.length)) {
+        throw failure('请填写文案或添加图片。');
+      }
+      const draft = { text, title, images, jobId };
+      if (platform === 'x') return await publishX(draft, context);
+      if (platform === 'linkedin') return await publishLinkedIn(draft, context);
+      if (platform === 'xiaohongshu') return await publishXhs(draft, env);
+      throw failure('所选平台不支持发布。');
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'EACCES')
+        throw failure('无法读取发布素材或渠道配置，请检查本地文件。');
+      error.uncertain ??= false;
+      error.retryable ??= false;
+      throw error;
+    }
+  }
+
+  return {
+    startOAuth: oauth.startOAuth,
+    finishOAuth: oauth.finishOAuth,
+    disconnect: oauth.disconnect,
+    getChannels,
+    publishTarget,
+  };
 }
+
+export function createProviders({ dataDir, env = process.env }) {
+  return bindProviders(defaultOAuth.createOAuth({ dataDir, env }), env);
+}
+
+export const { startOAuth, finishOAuth, disconnect, getChannels, publishTarget } =
+  bindProviders(defaultOAuth, process.env);
